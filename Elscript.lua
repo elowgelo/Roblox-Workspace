@@ -225,11 +225,25 @@ end)
 
 Players.PlayerRemoving:Connect(function(p) if p.Character then clearESP(p.Character) end end)
 
+-- instant interact
+local instantInteractEnabled = false
+local instantInteractConnection = nil
+
+local function applyInstantInteract()
+    -- Fungsi untuk mengubah HoldDuration menjadi 0
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then
+            v.HoldDuration = 0
+        end
+    end
+end
+
 --------------------------------------------------------------------------------
 -- UI & MOVEMENT
 --------------------------------------------------------------------------------
 local MainTab = Window:CreateTab("Main", 4483362458)
 local MoveTab = Window:CreateTab("Movement", 4483362458)
+local UtilityTab = Window:CreateTab("Utility", 4483362458)
 
 MainTab:CreateToggle({
 	Name = "Auto Heartbeat", CurrentValue = false, Flag = "AutoHeartbeat",
@@ -297,5 +311,35 @@ MoveTab:CreateToggle({
 LocalPlayer.CharacterAdded:Connect(function(c)
 	if noclipActive then task.wait(0.1) for _,p in ipairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
 end)
+
+UtilityTab:CreateToggle({
+    Name = "Instant Interact (Insta-E)",
+    CurrentValue = false,
+    Flag = "InstaE",
+    Callback = function(Value)
+        instantInteractEnabled = Value
+        if Value then
+            -- 1. Ubah prompt yang sudah ada saat ini
+            applyInstantInteract()
+
+            -- 2. Pasang 'Listener' untuk prompt yang baru muncul (misal item baru spawn)
+            instantInteractConnection = workspace.DescendantAdded:Connect(function(descendant)
+                if instantInteractEnabled and descendant:IsA("ProximityPrompt") then
+                    task.wait(0.1) -- Tunggu sebentar agar properti asli termuat dulu
+                    descendant.HoldDuration = 0
+                end
+            end)
+            
+            Rayfield:Notify({Title = "Utility", Content = "Instant Interact ON", Duration = 3})
+        else
+            -- Matikan listener jika fitur dimatikan
+            if instantInteractConnection then
+                instantInteractConnection:Disconnect()
+                instantInteractConnection = nil
+            end
+            Rayfield:Notify({Title = "Utility", Content = "Instant Interact OFF (Efek reset saat rejoin/respawn)", Duration = 3})
+        end
+    end
+})
 
 Rayfield:Notify({Title = "ElHub", Content = "Loaded.", Duration = 3})
