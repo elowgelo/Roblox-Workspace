@@ -1,4 +1,4 @@
--- ElHub - Five Night: Hunted (Updated with Opacity Slider)
+-- ElHub - Five Night: Hunted (Modified: Gradient Color & Distance)
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window = Rayfield:CreateWindow({
@@ -189,12 +189,24 @@ local function createOrUpdateESP(model, label, color, subText)
 end
 
 local function scanEntities()
+	local myChar = LocalPlayer.Character
+	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
+
 	if espEnabled then
 		for _, v in ipairs(Players:GetPlayers()) do
 			if v ~= LocalPlayer and v.Character then
 				local role = v:GetAttribute("Role")
 				local col = (role == "Monster" and Color3.fromRGB(255, 50, 50)) or (role == "Survivor" and Color3.fromRGB(255, 236, 161)) or Color3.fromRGB(220, 220, 220)
-				createOrUpdateESP(v.Character, v.Name, col)
+				
+				-- Hitung Jarak Player
+				local distStr = ""
+				local targetRoot = v.Character:FindFirstChild("HumanoidRootPart") or v.Character.PrimaryPart
+				if myRoot and targetRoot then
+					local dist = (myRoot.Position - targetRoot.Position).Magnitude
+					distStr = string.format(" [%.0fm]", dist)
+				end
+				
+				createOrUpdateESP(v.Character, v.Name .. distStr, col)
 			end
 		end
 	end
@@ -205,10 +217,34 @@ local function scanEntities()
 			for _, v in ipairs(folder:GetChildren()) do 
 				if v:IsA("Model") and v.Name:lower() == "computer" then
 					local prog, comp = v:GetAttribute("Progress"), v:GetAttribute("Completed")
-					local txt, col = "Progress: N/A", Color3.fromRGB(50, 255, 50)
-					if comp then txt, col = "Completed", Color3.fromRGB(100, 150, 255)
-					elseif type(prog) == "number" then txt = string.format("%.1f%%", prog) end
-					createOrUpdateESP(v, "COMPUTER", col, txt)
+					
+					-- MODIFIKASI: Logika Warna Gradasi (Putih -> Hijau)
+					local startColor = Color3.new(1, 1, 1) -- Putih (Awal)
+					local endColor = Color3.fromRGB(50, 255, 50) -- Hijau (Selesai)
+					
+					local alpha = 0
+					local txt = "Progress: N/A"
+					
+					if comp then 
+						txt = "Completed"
+						alpha = 1 -- Full Hijau
+					elseif type(prog) == "number" then 
+						txt = string.format("%.1f%%", prog)
+						-- Mengubah progress 0-100 menjadi 0.0-1.0 untuk Lerp
+						alpha = math.clamp(prog / 100, 0, 1)
+					end
+					
+					local col = startColor:Lerp(endColor, alpha)
+					
+					-- MODIFIKASI: Hitung Jarak Computer
+					local distStr = ""
+					local targetRoot = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+					if myRoot and targetRoot then
+						local dist = (myRoot.Position - targetRoot.Position).Magnitude
+						distStr = string.format(" [%.0fm]", dist)
+					end
+
+					createOrUpdateESP(v, "COMPUTER" .. distStr, col, txt)
 				end
 			end
 		end
