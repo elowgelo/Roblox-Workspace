@@ -1,49 +1,64 @@
--- ElHub - Five Night: Hunted (V6: Default Distance ONLY, Name OFF)
+-- ElHub - Five Night: Hunted (V8: Ultimate Monster & Advanced ESP)
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window = Rayfield:CreateWindow({
 	Name = "Welcome in ElHub!",
 	LoadingTitle = "Patience is a key..",
 	LoadingSubtitle = "Elproject",
-	ConfigurationSaving = { Enabled = true, FileName = "FIVE NIGHT: HUNTED_V6" },
+	ConfigurationSaving = { Enabled = true, FileName = "FIVE NIGHT: HUNTED_V8" },
 	Discord = { Enabled = false },
 	KeySystem = false
 })
 
--- Services
+-- ==============================================================================
+-- 1. SERVICES & VARIABLES
+-- ==============================================================================
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
--- Variables - Heartbeat
+-- Heartbeat Variables
 local HIT_OFFSET_SECONDS = 0.01
 local PERFECT_WINDOW_SECONDS = 0.14
 local Knit, Vetween, HeartbeatController, SoundController, HeartbeatGui
 local heartbeatAutoClickerActive = false
 local heartbeatConnection = nil
 
--- Variables - ESP
--- MODIFIKASI: Default Setting Sesuai Request V6
-local espNameEnabled = false     -- [MATI] Nama tidak muncul default
-local espDistanceEnabled = true  -- [AKTIF] Jarak muncul default
-local computerESPEnabled = true  -- [AKTIF] Komputer muncul default
-local showFullESPText = true     -- [AKTIF] Info progress komputer
-
+-- ESP Variables
+local espNameEnabled = false      -- [DEFAULT OFF]
+local espDistanceEnabled = true   -- [DEFAULT ON]
+local computerESPEnabled = true   -- [DEFAULT ON]
+local showFullESPText = true      -- [DEFAULT ON]
 local trackedModels = {} 
 local ESP_UPDATE_INTERVAL = 0.25
 local espFillTransparency = 0.5 
+local ESP_FONT_SIZE = 10          -- [REQUEST: Font Kecil]
 
--- Variables - Movement
+-- Monster / Advanced Variables
+local monsterLogicConnection = nil
+local noCooldownEnabled = false
+local killAuraEnabled = false
+local hitboxExpanderEnabled = false
+local desyncEnabled = false
+local killAuraRange = 15
+local hitboxSize = 15
+
+-- Desync Internals
+local ghostPart = nil
+local originalCFrame = nil
+
+-- Movement Variables
 local targetSpeed = 16
 local persistentSpeedEnabled = false
 local speedConnection = nil
 local noclipActive = false
 
---------------------------------------------------------------------------------
--- AUTO HEARTBEAT SYSTEM
---------------------------------------------------------------------------------
+-- ==============================================================================
+-- 2. HEARTBEAT MINIGAME SYSTEM
+-- ==============================================================================
 local function initializeHeartbeatReferences()
 	if Knit and HeartbeatController and SoundController and HeartbeatGui and Vetween then return true end
 
@@ -126,22 +141,20 @@ local function enableAutoHeartbeat(enable)
 	heartbeatAutoClickerActive = enable
 	if enable then
 		if not initializeHeartbeatReferences() then
-			Rayfield:Notify({Title = "Error", Content = "Failed to init modules.", Duration = 3})
+			Rayfield:Notify({Title = "Error", Content = "Modules Failed.", Duration = 3})
 			heartbeatAutoClickerActive = false
 			return
 		end
 		if heartbeatConnection then heartbeatConnection:Disconnect() end 
 		heartbeatConnection = RunService:BindToRenderStep("HeartbeatAutoClicker", Enum.RenderPriority.Character.Value + 1, onHeartbeatRenderStep)
-		Rayfield:Notify({Title = "Auto Heartbeat", Content = "Enabled", Duration = 3})
 	else
 		if heartbeatConnection then heartbeatConnection:Disconnect(); heartbeatConnection = nil end
-		Rayfield:Notify({Title = "Auto Heartbeat", Content = "Disabled", Duration = 3})
 	end
 end
 
---------------------------------------------------------------------------------
--- ESP SYSTEM
---------------------------------------------------------------------------------
+-- ==============================================================================
+-- 3. ESP SYSTEM
+-- ==============================================================================
 local function clearESP(model)
 	if not model or not trackedModels[model] then return end
 	local esp = trackedModels[model]
@@ -161,24 +174,18 @@ local function createOrUpdateESP(model, textContent, color)
 	if not esp.Tag or not esp.Tag.Parent then
 		local gui = Instance.new("BillboardGui", model)
 		gui.Name, gui.Adornee, gui.Size, gui.AlwaysOnTop = "ESPTag", root, UDim2.new(0, 150, 0, 60), true
-		gui.StudsOffset = Vector3.new(0, 5, 0)
+		gui.StudsOffset = Vector3.new(0, 4, 0) -- Sedikit diturunkan
 		
 		local txt = Instance.new("TextLabel", gui)
 		txt.Name, txt.Size, txt.BackgroundTransparency = "ESPText", UDim2.new(1,0,1,0), 1
-		txt.Font, txt.TextSize, txt.TextStrokeTransparency = Enum.Font.GothamSemibold, 14, 0.5
+		txt.Font, txt.TextSize, txt.TextStrokeTransparency = Enum.Font.GothamSemibold, ESP_FONT_SIZE, 0.5
 		
 		esp.Tag = gui
 	end
 	
 	esp.Tag.ESPText.Text = textContent
 	esp.Tag.ESPText.TextColor3 = color
-	
-	-- Tag hanya aktif jika ada teks (Jarak atau Nama)
-	if textContent and textContent ~= "" then
-		esp.Tag.Enabled = true 
-	else
-		esp.Tag.Enabled = false
-	end
+	esp.Tag.Enabled = (textContent and textContent ~= "")
 	
 	-- Create/Update Highlight
 	if not esp.Highlight or not esp.Highlight.Parent then
@@ -199,38 +206,25 @@ local function scanEntities()
 	local myChar = LocalPlayer.Character
 	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-	-- === ESP PLAYER ===
+	-- SCAN PLAYER
 	if espNameEnabled or espDistanceEnabled then
 		for _, v in ipairs(Players:GetPlayers()) do
 			if v ~= LocalPlayer and v.Character then
 				local role = v:GetAttribute("Role")
 				local col = (role == "Monster" and Color3.fromRGB(255, 50, 50)) or (role == "Survivor" and Color3.fromRGB(255, 236, 161)) or Color3.fromRGB(220, 220, 220)
-				
-				local displayText = ""
-				
-				-- Cek Toggle Nama
-				if espNameEnabled then
-					displayText = v.Name
+				local txt = ""
+				if espNameEnabled then txt = v.Name end
+				if espDistanceEnabled and myRoot and v.Character:FindFirstChild("HumanoidRootPart") then
+					local dist = (myRoot.Position - v.Character.HumanoidRootPart.Position).Magnitude
+					if txt ~= "" then txt = txt .. "\n" end
+					txt = txt .. string.format("[%dm]", dist)
 				end
-				
-				-- Cek Toggle Jarak
-				if espDistanceEnabled then
-					local targetRoot = v.Character:FindFirstChild("HumanoidRootPart") or v.Character.PrimaryPart
-					if myRoot and targetRoot then
-						local dist = (myRoot.Position - targetRoot.Position).Magnitude
-						
-						-- Jika nama aktif, beri enter. Jika tidak, jarak langsung tampil.
-						if displayText ~= "" then displayText = displayText .. "\n" end
-						displayText = displayText .. string.format("[%dm]", dist)
-					end
-				end
-
-				createOrUpdateESP(v.Character, displayText, col)
+				createOrUpdateESP(v.Character, txt, col)
 			end
 		end
 	end
 
-	-- === ESP COMPUTER ===
+	-- SCAN COMPUTER
 	if computerESPEnabled then
 		local folder = Workspace:FindFirstChild("Tasks", true)
 		if folder then
@@ -238,48 +232,28 @@ local function scanEntities()
 				if v:IsA("Model") and v.Name:lower() == "computer" then
 					local prog, comp = v:GetAttribute("Progress"), v:GetAttribute("Completed")
 					
-					-- Gradient Progress (Ease Out)
-					local startColor = Color3.new(1, 1, 1) 
-					local endColor = Color3.fromRGB(50, 255, 50) 
-					
+					-- Gradient Ease Out (Putih -> Hijau)
 					local alpha = 0
-					local subTxt = "N/A"
+					local info = "N/A"
+					if comp then info = "Done"; alpha = 1
+					elseif type(prog) == "number" then info = string.format("%.0f%%", prog); alpha = 1 - (1 - math.clamp(prog/100,0,1))^2 end
 					
-					if comp then 
-						subTxt = "Completed"
-						alpha = 1
-					elseif type(prog) == "number" then 
-						subTxt = string.format("%.1f%%", prog)
-						local rawAlpha = math.clamp(prog / 100, 0, 1)
-						-- Rumus Ease Out agar warna putih cepat hilang
-						alpha = 1 - (1 - rawAlpha) ^ 2
+					local col = Color3.new(1,1,1):Lerp(Color3.fromRGB(50,255,50), alpha)
+					local txt = ""
+					if espNameEnabled then txt = "PC" end
+					if espDistanceEnabled and myRoot and v.PrimaryPart then
+						local dist = (myRoot.Position - v.PrimaryPart.Position).Magnitude
+						if txt ~= "" then txt = txt .. "\n" end
+						txt = txt .. string.format("[%dm]", dist)
+					end
+					if showFullESPText then
+						if txt ~= "" then txt = txt .. "\n" end
+						txt = txt .. info
 					end
 					
-					local col = startColor:Lerp(endColor, alpha)
-					local mainText = ""
-					
-					if espNameEnabled then
-						mainText = "COMPUTER"
-					end
-					
-					if espDistanceEnabled then
-						local targetRoot = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-						if myRoot and targetRoot then
-							local dist = (myRoot.Position - targetRoot.Position).Magnitude
-							if mainText ~= "" then mainText = mainText .. "\n" end
-							mainText = mainText .. string.format("[%dm]", dist)
-						end
-					end
-					
-					if showFullESPText then 
-						if mainText ~= "" then mainText = mainText .. "\n" end
-						mainText = mainText .. subTxt
-					end
-					
-					-- Jika semua teks mati tapi ESP nyala, setidaknya highlight tetap ada
-					if mainText == "" and not showFullESPText then mainText = " " end
-
-					createOrUpdateESP(v, mainText, col)
+					-- Tetap highlight walau teks kosong
+					if txt == "" and not showFullESPText then txt = " " end
+					createOrUpdateESP(v, txt, col)
 				end
 			end
 		end
@@ -293,83 +267,229 @@ task.spawn(function()
 		task.wait(ESP_UPDATE_INTERVAL)
 	end
 end)
-
 Players.PlayerRemoving:Connect(function(p) if p.Character then clearESP(p.Character) end end)
 
--- instant interact
-local instantInteractEnabled = false
-local instantInteractConnection = nil
+-- ==============================================================================
+-- 4. MONSTER & ADVANCED SYSTEM (LOGIC TERPISAH)
+-- ==============================================================================
 
-local function applyInstantInteract()
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("ProximityPrompt") then
-            v.HoldDuration = 0
+-- Helper: Update Visual Ghost
+local function updateGhostVisual(cframe)
+    if not ghostPart then
+        ghostPart = Instance.new("Part")
+        ghostPart.Name = "ServerGhost"
+        ghostPart.Size = Vector3.new(4, 6, 4)
+        ghostPart.Anchored = true
+        ghostPart.CanCollide = false
+        ghostPart.Transparency = 0.6
+        ghostPart.Color = Color3.new(0, 0, 0)
+        ghostPart.Material = Enum.Material.ForceField
+        ghostPart.Parent = workspace
+    end
+    ghostPart.CFrame = cframe
+end
+
+local function removeGhost()
+    if ghostPart then ghostPart:Destroy(); ghostPart = nil end
+end
+
+-- Helper: Reset Hitboxes (Saat fitur dimatikan)
+local function resetHitboxes()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local rp = p.Character.HumanoidRootPart
+            rp.Size = Vector3.new(2, 2, 1) -- Ukuran standar
+            rp.Transparency = 1
+            rp.Color = Color3.new(1,1,1) -- Reset warna standar (biasanya tidak terlihat)
         end
     end
 end
 
---------------------------------------------------------------------------------
--- UI & MOVEMENT
---------------------------------------------------------------------------------
+-- MAIN MONSTER LOGIC LOOP
+local function runMonsterLogic()
+	local char = LocalPlayer.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	local myRoot = char.HumanoidRootPart
+	local myHuman = char:FindFirstChild("Humanoid")
+	if not myHuman or myHuman.Health <= 0 then removeGhost(); return end
+
+	-- A. DESYNC / GHOST MODE
+	if desyncEnabled then
+		if not originalCFrame then
+			originalCFrame = myRoot.CFrame
+			updateGhostVisual(originalCFrame)
+			-- Freeze Velocity
+			myRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			myRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		end
+		-- Server Lag Trick
+		pcall(function() sethiddenproperty(myRoot, "NetworkIsSleeping", true) end)
+	else
+		if originalCFrame then
+			originalCFrame = nil
+			removeGhost()
+			myRoot.AssemblyLinearVelocity = Vector3.new(0,0,0)
+		end
+	end
+
+	-- B. HITBOX EXPANDER
+	if hitboxExpanderEnabled then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer and p.Character then
+				local tRoot = p.Character:FindFirstChild("HumanoidRootPart")
+				local tHuman = p.Character:FindFirstChild("Humanoid")
+				if tRoot and tHuman and tHuman.Health > 0 then
+					tRoot.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+					tRoot.Transparency = 0.7
+					tRoot.CanCollide = false
+					tRoot.Color = Color3.fromRGB(255, 0, 0) -- Merah biar jelas
+				end
+			end
+		end
+	end
+
+	-- C. KILL AURA & NO COOLDOWN
+	if killAuraEnabled or noCooldownEnabled then
+		local tool = char:FindFirstChildOfClass("Tool")
+		local closestTarget = nil
+		
+		-- Logic Jarak (Dari Ghost jika desync nyala, dari Badan jika mati)
+		local originPos = (desyncEnabled and originalCFrame) and originalCFrame.Position or myRoot.Position
+		
+		if killAuraEnabled then
+			local shortestDist = killAuraRange
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= LocalPlayer and p.Character then
+					local tRoot = p.Character:FindFirstChild("HumanoidRootPart")
+					local tHuman = p.Character:FindFirstChild("Humanoid")
+					if tRoot and tHuman and tHuman.Health > 0 then
+						local dist = (originPos - tRoot.Position).Magnitude
+						if dist < shortestDist then
+							shortestDist = dist
+							closestTarget = p.Character
+						end
+					end
+				end
+			end
+		end
+
+		-- Auto Equip
+		if closestTarget and not tool then
+			local backpack = LocalPlayer:FindFirstChild("Backpack")
+			if backpack then
+				local bestTool = backpack:FindFirstChildOfClass("Tool")
+				if bestTool then bestTool.Parent = char; tool = bestTool end
+			end
+		end
+
+		-- Action
+		if tool then
+			if noCooldownEnabled then tool.Enabled = true end
+			if closestTarget then tool:Activate() end
+		end
+	end
+end
+
+-- Toggle Handler
+local function toggleMonsterLoop()
+	local shouldRun = noCooldownEnabled or killAuraEnabled or hitboxExpanderEnabled or desyncEnabled
+	if shouldRun then
+		if not monsterLogicConnection then
+			monsterLogicConnection = RunService.Stepped:Connect(runMonsterLogic)
+		end
+	else
+		if monsterLogicConnection then
+			monsterLogicConnection:Disconnect()
+			monsterLogicConnection = nil
+			removeGhost()
+			resetHitboxes() -- Bersihkan hitbox saat mati
+		end
+	end
+end
+
+-- ==============================================================================
+-- 5. UTILITY & MOVEMENT
+-- ==============================================================================
+local function applyInstantInteract()
+    for _, v in ipairs(workspace:GetDescendants()) do if v:IsA("ProximityPrompt") then v.HoldDuration = 0 end end
+end
+
+local instantInteractConnection = nil
+
+-- ==============================================================================
+-- 6. UI CONSTRUCTION (RAYFIELD)
+-- ==============================================================================
 local MainTab = Window:CreateTab("Main", 4483362458)
+local MonsterTab = Window:CreateTab("Monster", 4483362458)
 local MoveTab = Window:CreateTab("Movement", 4483362458)
 local UtilityTab = Window:CreateTab("Utility", 4483362458)
 
+-- [MAIN TAB]
 MainTab:CreateToggle({
 	Name = "Auto Heartbeat", CurrentValue = false, Flag = "AutoHeartbeat",
-	Callback = function(v) if not enableAutoHeartbeat(v) and v then Rayfield:SetFlag("AutoHeartbeat", false) end end
+	Callback = function(v) enableAutoHeartbeat(v); if not v then Rayfield:SetFlag("AutoHeartbeat", false) end end
 })
 
 MainTab:CreateSection("ESP Options")
-
 MainTab:CreateToggle({
 	Name = "ESP Player Name", CurrentValue = espNameEnabled, Flag = "ESPName",
-	Callback = function(v) 
-		espNameEnabled = v
-	end
+	Callback = function(v) espNameEnabled = v end
 })
-
 MainTab:CreateToggle({
 	Name = "Show Distance", CurrentValue = espDistanceEnabled, Flag = "ESPDistance",
-	Callback = function(v) 
-		espDistanceEnabled = v 
-	end
+	Callback = function(v) espDistanceEnabled = v end
 })
-
 MainTab:CreateToggle({
 	Name = "ESP Computer", CurrentValue = computerESPEnabled, Flag = "ESPComp",
 	Callback = function(v) computerESPEnabled = v; if not v then for m in pairs(trackedModels) do if m.Name:lower() == "computer" then clearESP(m) end end end end
 })
-
 MainTab:CreateToggle({
 	Name = "Show Progress Info", CurrentValue = showFullESPText, Flag = "ESPText",
-	Callback = function(v) 
-		showFullESPText = v
-	end
+	Callback = function(v) showFullESPText = v end
 })
-
 MainTab:CreateSlider({
-	Name = "ESP Transparency (Fill)",
-	Range = {0, 1},
-	Increment = 0.1,
-	Suffix = "Alpha",
-	CurrentValue = 0.5,
-	Flag = "ESPTransparency",
-	Callback = function(Value)
-		espFillTransparency = Value
-		for _, esp in pairs(trackedModels) do
-			if esp.Highlight then
-				esp.Highlight.FillTransparency = Value
-			end
-		end
-	end,
+	Name = "ESP Transparency (Fill)", Range = {0, 1}, Increment = 0.1, Suffix = "Alpha", CurrentValue = 0.5, Flag = "ESPTransparency",
+	Callback = function(Value) espFillTransparency = Value; for _, esp in pairs(trackedModels) do if esp.Highlight then esp.Highlight.FillTransparency = Value end end end,
 })
 
+-- [MONSTER TAB - ADVANCED]
+MonsterTab:CreateSection("Combat")
+MonsterTab:CreateToggle({
+	Name = "No Attack Cooldown", CurrentValue = false, Flag = "NoCooldown",
+	Callback = function(v) noCooldownEnabled = v; toggleMonsterLoop() end
+})
+MonsterTab:CreateToggle({
+	Name = "Kill Aura (15m)", CurrentValue = false, Flag = "KillAura",
+	Callback = function(v) killAuraEnabled = v; toggleMonsterLoop() end
+})
+MonsterTab:CreateSection("Exploits")
+MonsterTab:CreateToggle({
+	Name = "Hitbox Expander", CurrentValue = false, Flag = "Hitbox",
+	Callback = function(v) hitboxExpanderEnabled = v; toggleMonsterLoop() end
+})
+MonsterTab:CreateSlider({
+	Name = "Hitbox Size", Range = {5, 30}, Increment = 1, CurrentValue = 15, Flag = "HitboxSize",
+	Callback = function(v) hitboxSize = v end,
+})
+MonsterTab:CreateToggle({
+	Name = "Ghost Mode [Key: V]", CurrentValue = false, Flag = "GhostMode",
+	Callback = function(v) desyncEnabled = v; toggleMonsterLoop() end
+})
+-- Keybind V Listener
+UserInputService.InputBegan:Connect(function(input, gp)
+	if not gp and input.KeyCode == Enum.KeyCode.V then
+		desyncEnabled = not desyncEnabled
+		Rayfield:SetFlag("GhostMode", desyncEnabled) -- Update Toggle UI
+		toggleMonsterLoop()
+	end
+end)
+
+
+-- [MOVEMENT TAB]
 MoveTab:CreateSlider({
 	Name = "WalkSpeed", Range = {16, 100}, Increment = 1, CurrentValue = 16, Flag = "WS",
 	Callback = function(v) targetSpeed = v; if LocalPlayer.Character then LocalPlayer.Character.Humanoid.WalkSpeed = v end end
 })
-
 MoveTab:CreateToggle({
 	Name = "Loop Speed", CurrentValue = false,
 	Callback = function(v)
@@ -381,7 +501,6 @@ MoveTab:CreateToggle({
 		end
 	end
 })
-
 MoveTab:CreateToggle({
 	Name = "Noclip", CurrentValue = false,
 	Callback = function(v)
@@ -389,34 +508,22 @@ MoveTab:CreateToggle({
 		if LocalPlayer.Character then for _,p in ipairs(LocalPlayer.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = not v end end end
 	end
 })
+LocalPlayer.CharacterAdded:Connect(function(c) if noclipActive then task.wait(0.1) for _,p in ipairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end end)
 
-LocalPlayer.CharacterAdded:Connect(function(c)
-	if noclipActive then task.wait(0.1) for _,p in ipairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
-end)
 
+-- [UTILITY TAB]
 UtilityTab:CreateToggle({
-    Name = "Instant Interact (Insta-E)",
-    CurrentValue = false,
-    Flag = "InstaE",
+    Name = "Instant Interact (Insta-E)", CurrentValue = false, Flag = "InstaE",
     Callback = function(Value)
-        instantInteractEnabled = Value
         if Value then
             applyInstantInteract()
             instantInteractConnection = workspace.DescendantAdded:Connect(function(descendant)
-                if instantInteractEnabled and descendant:IsA("ProximityPrompt") then
-                    task.wait(0.1) 
-                    descendant.HoldDuration = 0
-                end
+                if descendant:IsA("ProximityPrompt") then task.wait(0.1) descendant.HoldDuration = 0 end
             end)
-            Rayfield:Notify({Title = "Utility", Content = "Instant Interact ON", Duration = 3})
         else
-            if instantInteractConnection then
-                instantInteractConnection:Disconnect()
-                instantInteractConnection = nil
-            end
-            Rayfield:Notify({Title = "Utility", Content = "Instant Interact OFF", Duration = 3})
+            if instantInteractConnection then instantInteractConnection:Disconnect() instantInteractConnection = nil end
         end
     end
 })
 
-Rayfield:Notify({Title = "ElHub", Content = "Loaded.", Duration = 3})
+Rayfield:Notify({Title = "ElHub V8", Content = "Loaded. Monster Tab + Small Fonts Ready.", Duration = 3})
